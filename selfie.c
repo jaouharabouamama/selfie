@@ -805,7 +805,7 @@ void     decode_u_format();
 uint64_t OP_LD     = 3;   // 0000011, I format (LD)
 uint64_t OP_IMM    = 19;  // 0010011, I format (ADDI, NOP)
 uint64_t OP_SD     = 35;  // 0100011, S format (SD)
-uint64_t OP_OP     = 51;  // 0110011, R format (ADD, SUB, MUL, DIVU, REMU, SLTU)
+uint64_t OP_OP     = 51;  // 0110011, R format (ADD, SLL, SRL, SUB, MUL, DIVU, REMU, SLTU)
 uint64_t OP_LUI    = 55;  // 0110111, U format (LUI)
 uint64_t OP_BRANCH = 99;  // 1100011, B format (BEQ)
 uint64_t OP_JALR   = 103; // 1100111, I format (JALR)
@@ -816,6 +816,8 @@ uint64_t OP_SYSTEM = 115; // 1110011, I format (ECALL)
 uint64_t F3_NOP   = 0; // 000
 uint64_t F3_ADDI  = 0; // 000
 uint64_t F3_ADD   = 0; // 000
+uint64_t F3_SLL   = 1; // 001
+uint64_t F3_SRL   = 5; // 101
 uint64_t F3_SUB   = 0; // 000
 uint64_t F3_MUL   = 0; // 000
 uint64_t F3_DIVU  = 5; // 101
@@ -829,6 +831,8 @@ uint64_t F3_ECALL = 0; // 000
 
 // f7-codes
 uint64_t F7_ADD  = 0;  // 0000000
+uint64_t F7_SLL  = 0;  // 0000000
+uint64_t F7_SRL  = 0;  // 0000000
 uint64_t F7_MUL  = 1;  // 0000001
 uint64_t F7_SUB  = 32; // 0100000
 uint64_t F7_DIVU = 1;  // 0000001
@@ -873,6 +877,8 @@ void emit_lui(uint64_t rd, uint64_t immediate);
 void emit_addi(uint64_t rd, uint64_t rs1, uint64_t immediate);
 
 void emit_add(uint64_t rd, uint64_t rs1, uint64_t rs2);
+void emit_sll(uint64_t rd, uint64_t rs1, uint64_t rs2);
+void emit_srl(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_sub(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_mul(uint64_t rd, uint64_t rs1, uint64_t rs2);
 void emit_divu(uint64_t rd, uint64_t rs1, uint64_t rs2);
@@ -931,6 +937,8 @@ uint64_t ELF_ENTRY_POINT = 65536; // = 0x10000 (address of beginning of code)
 uint64_t ic_lui   = 0;
 uint64_t ic_addi  = 0;
 uint64_t ic_add   = 0;
+uint64_t ic_sll   = 0;
+uint64_t ic_srl   = 0;
 uint64_t ic_sub   = 0;
 uint64_t ic_mul   = 0;
 uint64_t ic_divu  = 0;
@@ -1095,6 +1103,8 @@ void print_add_sub_mul_divu_remu_sltu(char *mnemonics);
 void print_add_sub_mul_divu_remu_sltu_before();
 
 void do_add();
+void do_sll();
+void do_srl();
 void constrain_add_sub_mul_divu_remu_sltu(char* operator);
 
 void do_sub();
@@ -5275,6 +5285,8 @@ void reset_instruction_counters() {
   ic_lui   = 0;
   ic_addi  = 0;
   ic_add   = 0;
+  ic_sll   = 0;
+  ic_srl   = 0;
   ic_sub   = 0;
   ic_mul   = 0;
   ic_divu  = 0;
@@ -5289,7 +5301,7 @@ void reset_instruction_counters() {
 }
 
 uint64_t get_total_number_of_instructions() {
-  return ic_lui + ic_addi + ic_add + ic_sub + ic_mul + ic_divu + ic_remu + ic_sltu + ic_ld + ic_sd + ic_beq + ic_jal + ic_jalr + ic_ecall;
+  return ic_lui + ic_addi + ic_add + ic_sll + ic_srl + ic_sub + ic_mul + ic_divu + ic_remu + ic_sltu + ic_ld + ic_sd + ic_beq + ic_jal + ic_jalr + ic_ecall;
 }
 
 void print_instruction_counter(uint64_t total, uint64_t counter, char* mnemonics) {
@@ -5318,6 +5330,10 @@ void print_instruction_counters() {
 
   printf1("%s: compute: ", selfie_name);
   print_instruction_counter(ic, ic_add, "add");
+  print(", ");
+  print_instruction_counter(ic, ic_sll, "sll");
+  print(", ");
+  print_instruction_counter(ic, ic_srl, "srl");
   print(", ");
   print_instruction_counter(ic, ic_sub, "sub");
   print(", ");
@@ -5414,6 +5430,18 @@ void emit_add(uint64_t rd, uint64_t rs1, uint64_t rs2) {
   emit_instruction(encode_r_format(F7_ADD, rs2, rs1, F3_ADD, rd, OP_OP));
 
   ic_add = ic_add + 1;
+}
+
+void emit_sll(uint64_t rd, uint64_t rs1, uint64_t rs2) {
+  emit_instruction(encode_r_format(F7_SLL, rs2, rs1, F3_SLL, rd, OP_OP));
+
+  ic_sll = ic_sll + 1;
+}
+
+void emit_srl(uint64_t rd, uint64_t rs1, uint64_t rs2) {
+  emit_instruction(encode_r_format(F7_SRL, rs2, rs1, F3_SRL, rd, OP_OP));
+
+  ic_srl = ic_srl + 1;
 }
 
 void emit_sub(uint64_t rd, uint64_t rs1, uint64_t rs2) {
@@ -6736,6 +6764,26 @@ void do_add() {
   pc = pc + INSTRUCTIONSIZE;
 
   ic_add = ic_add + 1;
+}
+
+void do_sll() {
+  if (rd != REG_ZR)
+    // semantics of add
+    *(registers + rd) = *(registers + rs1) << *(registers + rs2);
+
+  pc = pc + INSTRUCTIONSIZE;
+
+  ic_sll = ic_sll + 1;
+}
+
+void do_srl() {
+  if (rd != REG_ZR)
+    // semantics of add
+    *(registers + rd) = *(registers + rs1) >> *(registers + rs2);
+
+  pc = pc + INSTRUCTIONSIZE;
+
+  ic_srl = ic_srl + 1;
 }
 
 void constrain_add_sub_mul_divu_remu_sltu(char* operator) {
